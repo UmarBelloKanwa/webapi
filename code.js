@@ -1,4 +1,4 @@
-import { Storage } from "./webapi.js";
+import { Storage } from "/library/webapi.js";
 const dbName = 'My_School';
 new Storage(dbName);
 
