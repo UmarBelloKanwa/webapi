@@ -9,14 +9,10 @@ export class Storage {
             openDatabase(action, storeName) {
                 return new Promise((resolve, reject) => {
                     try {
+                        this.dataBase?.close();
                         let request;
-                        if (action === 'create') {
-                            request = indexedDB.open(this.dbName);
-                        } else if (action === 'update' || action === 'delete') {
-                            this.dataBase.close();
-                            const newVersion = this.dataBase.version + 1;
-                            request = indexedDB.open(this.dbName, newVersion);
-                        }
+                        const newVersion = (this.dataBase?.version || 0) + 1;
+                        request = action == 'run' ? indexedDB.open(this.dbName) : indexedDB.open(this.dbName, newVersion);
                         request.addEventListener('upgradeneeded', (ev) => {
                             this.dataBase = ev.target.result;
                             switch(action) {
@@ -25,17 +21,13 @@ export class Storage {
                                     if (!this.dataBase.objectStoreNames.contains(storeName)) {
                                         this.dataBase.createObjectStore(storeName, { keyPath: 'id', autoIncrement: true });
                                         console.log(`Object store ${storeName} created.`);
-                                    } else {
-                                        console.log(`Object store ${storeName} already exists.`);
-                                    }
+                                    } else console.log(`Object store ${storeName} already exists.`);
                                     break;
                                 case 'delete':
                                     if (this.dataBase.objectStoreNames.contains(storeName)) {
                                         this.dataBase.deleteObjectStore(storeName);
                                         console.log(`Object store ${storeName} deleted.`);
-                                    } else {
-                                        console.log(`Object store ${storeName} does not exist.`);
-                                    }
+                                    } else console.log(`Object store ${storeName} does not exist.`);
                                     break;
                             }
                             console.log(`Database ${this.dbName} is being upgraded.`);
@@ -50,7 +42,7 @@ export class Storage {
                             reject(e.target.error);
                         });
                         this.lastStore = this.dataBase && this.dataBase.objectStoreNames.length > 0 ?
-                            this.dataBase.objectStoreNames[this.dataBase.objectStoreNames.length - 1] : null;
+                            this.dataBase.objectStoreNames[this.dataBase.objectStoreNames.length -1] : null;
                     } catch (error) {
                         console.error("Error accessing database:", error);
                         reject(error);
@@ -58,13 +50,21 @@ export class Storage {
                 });
             }
             deleteDb(name) {
-                return indexedDB.deleteDatabase(name);
+                return new Promise((resolve, reject) => {
+                    try {
+                        const _delete = indexedDB.deleteDatabase(name);
+                        _delete.onsuccess = () => resolve();
+                        _delete.onerror = () => reject('Error deleting ' + name + ' database');
+                    } catch (error) { reject(error); }
+                });
             }
             async operate(action, storeName, data = '') {
                 if (!this.dataBase || !this.dataBase.objectStoreNames.contains(storeName)) {
-                    await this.openDatabase('update', storeName);
+                    await this.openDatabase(action === 'display' ? 'run' : 'update', storeName);
                 }
                 return new Promise((resolve, reject) => {
+                    console.log('Database version', this.dataBase.version);
+                    if (action === 'display' && !this.dataBase.objectStoreNames.contains(storeName)) resolve([]);
                     const transaction = this.dataBase.transaction([storeName], 'readwrite');
                     const objectStore = transaction.objectStore(storeName);
                     transaction.addEventListener('complete', () => {
@@ -113,22 +113,54 @@ export class Storage {
     }
 }
 export class Actions {
-    actions(actions, data) {
-        const notify = (text) => {
-            if ('Notification' in window) {
-                Notification.requestPermission().then( permission => void new Notification(text));
-            } 
-            console.log(text); 
-            window.alert(text);
+    constructor() {
+        const script = document.createElement('script');
+        script.src = "https://code.responsivevoice.org/responsivevoice.js?key=tyx4tT4l";
+        document.head.appendChild(script);
+        setTimeout(() => {responsiveVoice.enableWindowClickHook();}, 3000);
+    }
+    speak(action = 'play', text = '', lang = 'english', speaker = 'male') {
+        switch (action) {
+            case 'play' :
+                responsiveVoice.speak(text, `${lang} ${speaker}`, { language: lang });
+                break;
+            case 'pause' :
+                responsiveVoice.pause();
+                break;
+            case 'resume' :
+                responsiveVoice.resume();
+                break;
+            case 'cancel' :
+                responsiveVoice.cancel();
+                break;
         }
+    }
+    notify(text) {
+        if ('Notification' in window) {
+            Notification.requestPermission().then( permission => void new Notification(text));
+            return;
+        }
+        const alert = document.createElement('alert');
+        alert.textContent = text;
+        alert.style = `
+            position:absolute; bottom:11vh; left:50%;
+            transform:translate(-50%, 0%); z-index:7;  
+            box-shadow:0 0 1.5vw 0 var(--txt),  0 0 5vw 0 black;
+            width:fit-content; height:auto; text-align:center;
+            background:rgba(255, 255, 255, 1); color:black;
+            border-radius:2em; padding:1em;`;
+        document.body.appendChild(alert);
+        window.setTimeout(() => document.body.removeChild(alert), 3335);
+    }
+    actions(actions, data) {
         switch (actions) {
             case 'notify' : 
-               notify(data);
+               this.notify(data);
                break;
             case 'copy' :
                 if (navigator.clipboard != 'undefined') {
                     navigator.clipboard.writeText(data);
-                    notify('copied');
+                    this.notify('copied');
                 } else notify('Failed to copy the text');
                 break;
             case 'download' :
@@ -137,7 +169,7 @@ export class Actions {
                 link.href = URL.createObjectURL(new Blob([data], { type : 'text/plain'}));
                 link.download = data.slice(0, 12);
                 link.click();
-                notify('Downloaded file ' + link.download);
+                this.notify('Downloaded file ' + link.download);
                 break;
             case 'share' :
                 if (navigator.share != 'undefined') {
@@ -145,15 +177,8 @@ export class Actions {
                         title : data.slice(0, 12),
                         text : data,
                     });
-                    notify('Shared');
+                    this.notify('Shared');
                 } else notify('Web Share API is not supported by this browser');
-                break;
-            case 'speech' :
-                responsiveVoice.speak(data, 'Arabic Female', { language: 'arabic' });
-                if ('speechSynthesis' in window) {
-                    const utterance = new SpeechSynthesisUtterance(data);
-                    window.speechSynthesis.speak(utterance);   
-                } else notify('Speech Synthesis API is not supported by this browser');
                 break;
         }
     }
